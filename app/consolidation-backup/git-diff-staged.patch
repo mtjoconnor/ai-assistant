@@ -1,0 +1,48 @@
+diff --git a/app/components/external-link.tsx b/app/src/components/external-link.tsx
+similarity index 100%
+rename from app/components/external-link.tsx
+rename to app/src/components/external-link.tsx
+diff --git a/app/components/haptic-tab.tsx b/app/src/components/haptic-tab.tsx
+similarity index 100%
+rename from app/components/haptic-tab.tsx
+rename to app/src/components/haptic-tab.tsx
+diff --git a/app/components/hello-wave.tsx b/app/src/components/hello-wave.tsx
+similarity index 100%
+rename from app/components/hello-wave.tsx
+rename to app/src/components/hello-wave.tsx
+diff --git a/app/components/parallax-scroll-view.tsx b/app/src/components/parallax-scroll-view.tsx
+similarity index 100%
+rename from app/components/parallax-scroll-view.tsx
+rename to app/src/components/parallax-scroll-view.tsx
+diff --git a/app/components/themed-text.tsx b/app/src/components/themed-text.tsx
+similarity index 100%
+rename from app/components/themed-text.tsx
+rename to app/src/components/themed-text.tsx
+diff --git a/app/components/themed-view.tsx b/app/src/components/themed-view.tsx
+similarity index 100%
+rename from app/components/themed-view.tsx
+rename to app/src/components/themed-view.tsx
+diff --git a/app/components/ui/collapsible.tsx b/app/src/components/ui/collapsible.tsx
+similarity index 100%
+rename from app/components/ui/collapsible.tsx
+rename to app/src/components/ui/collapsible.tsx
+diff --git a/app/components/ui/icon-symbol.ios.tsx b/app/src/components/ui/icon-symbol.ios.tsx
+similarity index 100%
+rename from app/components/ui/icon-symbol.ios.tsx
+rename to app/src/components/ui/icon-symbol.ios.tsx
+diff --git a/app/components/ui/icon-symbol.tsx b/app/src/components/ui/icon-symbol.tsx
+similarity index 100%
+rename from app/components/ui/icon-symbol.tsx
+rename to app/src/components/ui/icon-symbol.tsx
+diff --git a/app/hooks/use-color-scheme.ts b/app/src/hooks/use-color-scheme.ts
+similarity index 100%
+rename from app/hooks/use-color-scheme.ts
+rename to app/src/hooks/use-color-scheme.ts
+diff --git a/app/hooks/use-color-scheme.web.ts b/app/src/hooks/use-color-scheme.web.ts
+similarity index 100%
+rename from app/hooks/use-color-scheme.web.ts
+rename to app/src/hooks/use-color-scheme.web.ts
+diff --git a/app/hooks/use-theme-color.ts b/app/src/hooks/use-theme-color.ts
+similarity index 100%
+rename from app/hooks/use-theme-color.ts
+rename to app/src/hooks/use-theme-color.ts

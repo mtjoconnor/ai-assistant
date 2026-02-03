@@ -1,0 +1,15 @@
+ M .DS_Store
+R  app/components/external-link.tsx -> app/src/components/external-link.tsx
+R  app/components/haptic-tab.tsx -> app/src/components/haptic-tab.tsx
+R  app/components/hello-wave.tsx -> app/src/components/hello-wave.tsx
+R  app/components/parallax-scroll-view.tsx -> app/src/components/parallax-scroll-view.tsx
+R  app/components/themed-text.tsx -> app/src/components/themed-text.tsx
+R  app/components/themed-view.tsx -> app/src/components/themed-view.tsx
+R  app/components/ui/collapsible.tsx -> app/src/components/ui/collapsible.tsx
+R  app/components/ui/icon-symbol.ios.tsx -> app/src/components/ui/icon-symbol.ios.tsx
+R  app/components/ui/icon-symbol.tsx -> app/src/components/ui/icon-symbol.tsx
+R  app/hooks/use-color-scheme.ts -> app/src/hooks/use-color-scheme.ts
+R  app/hooks/use-color-scheme.web.ts -> app/src/hooks/use-color-scheme.web.ts
+R  app/hooks/use-theme-color.ts -> app/src/hooks/use-theme-color.ts
+ M app/structure.txt
+?? app/consolidation-backup/
