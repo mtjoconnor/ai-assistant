@@ -18,21 +18,18 @@
 │   ├── .DS_Store
 │   └── images
 ├── components
-│   ├── external-link.tsx
-│   ├── haptic-tab.tsx
-│   ├── hello-wave.tsx
-│   ├── parallax-scroll-view.tsx
-│   ├── themed-text.tsx
-│   ├── themed-view.tsx
 │   └── ui
+├── consolidation-backup
+│   ├── .DS_Store
+│   ├── components
+│   ├── git-diff-staged.patch
+│   ├── git-status.txt
+│   ├── hooks
+│   └── README.txt
 ├── constants
 │   └── theme.ts
 ├── eslint.config.js
 ├── expo-env.d.ts
-├── hooks
-│   ├── use-color-scheme.ts
-│   ├── use-color-scheme.web.ts
-│   └── use-theme-color.ts
 ├── node_modules
 │   ├── .bin
 │   ├── .package-lock.json
@@ -636,4 +633,4 @@
 ├── structure.txt
 └── tsconfig.json
 
-607 directories, 30 files
+609 directories, 25 files
