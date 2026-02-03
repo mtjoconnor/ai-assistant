@@ -58,23 +58,26 @@ The app is built using **Expo and React Native** for rapid cross-platform develo
 ---
 
 ## Project Structure (Planned)
+```
 
 app/
 ├─ src/
-│ ├─ screens/
-│ ├─ components/
-│ ├─ services/
-│ │ ├─ calendarService.ts
-│ │ ├─ reminderService.ts
-│ │ ├─ ttsService.ts
-│ │ └─ apiClient.ts
-│ ├─ hooks/
-│ ├─ models/
-│ └─ utils/
+│  ├─ screens/
+│  ├─ components/
+│  ├─ services/
+│  │  ├─ calendarService.ts
+│  │  ├─ reminderService.ts
+│  │  ├─ ttsService.ts
+│  │  └─ apiClient.ts
+│  ├─ hooks/
+│  ├─ models/
+│  └─ utils/
 server/
 ├─ index.js
 ├─ routes/
 └─ services/
+
+```
 
 ---
 
