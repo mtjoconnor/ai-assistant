@@ -12,9 +12,30 @@ import {
 } from 'react-native'
 import { generateRemindersDemo, SuggestedReminder } from '../services/reminderService'
 
+// Optional: uncomment and install AsyncStorage to persist upcoming items across restarts
+// npm install @react-native-async-storage/async-storage
+import AsyncStorage from '@react-native-async-storage/async-storage'
+const UPCOMING_KEY = 'upcoming_reminders_v1'
+
 export default function HomeScreen() {
 	const [loading, setLoading] = useState(false)
 	const [suggestions, setSuggestions] = useState<SuggestedReminder[]>([])
+	const [upcoming, setUpcoming] = useState<SuggestedReminder[]>([])
+
+	useEffect(() => {
+		// load persisted upcoming items if you enable AsyncStorage (optional)
+		// (example code commented below)
+		
+		;(async () => {
+			try {
+				const raw = await AsyncStorage.getItem(UPCOMING_KEY)
+				if (raw) setUpcoming(JSON.parse(raw))
+			} catch (e) {
+				console.warn('failed to load upcoming', e)
+			}
+		})()
+		
+	}, [])
 
 	async function loadSuggestions() {
 		setLoading(true)
@@ -28,23 +49,35 @@ export default function HomeScreen() {
 		}
 	}
 
-	useEffect(() => {
-		// initial fetch (optional)
-		// loadSuggestions()
-	}, [])
+	function persistUpcoming(list: SuggestedReminder[]) {
+		// optional persistence using AsyncStorage
+		
+		AsyncStorage.setItem(UPCOMING_KEY, JSON.stringify(list)).catch(e =>
+			console.warn('failed to save upcoming', e)
+		)
+		
+	}
 
 	function handleAccept(item: SuggestedReminder) {
-		// temporary behaviour: remove from list and confirm
+		// add to upcoming list (keep sorted by time if you want)
+		setUpcoming(prev => {
+			const next = [...prev, item].sort((a, b) => new Date(a.when).getTime() - new Date(b.when).getTime())
+			persistUpcoming(next)
+			return next
+		})
+
+		// remove from suggestions
 		setSuggestions(prev => prev.filter(p => p.id !== item.id))
-		Alert.alert('Accepted', `Accepted: ${item.text}`)
-		// TODO: schedule local notification or persist accepted suggestion
+
+		Alert.alert('Accepted', `Added to Upcoming: ${item.text}`)
+		// TODO: schedule local notification via expo-notifications if desired
 	}
 
 	function handleDismiss(id: string) {
 		setSuggestions(prev => prev.filter(p => p.id !== id))
 	}
 
-	function renderItem({ item }: { item: SuggestedReminder }) {
+	function renderSuggestion({ item }: { item: SuggestedReminder }) {
 		return (
 			<View style={styles.card}>
 				<View style={{ flex: 1 }}>
@@ -71,27 +104,43 @@ export default function HomeScreen() {
 		)
 	}
 
+	function renderUpcoming({ item }: { item: SuggestedReminder }) {
+		return (
+			<View style={styles.upcomingItem}>
+				<Text style={styles.cardText}>{item.text}</Text>
+				<Text style={styles.cardSub}>{new Date(item.when).toLocaleString()}</Text>
+			</View>
+		)
+	}
+
 	return (
 		<ScrollView contentContainerStyle={styles.container}>
 			<Text style={styles.title}>Today</Text>
 			<Text style={styles.subtitle}>
-				No reminders yet — your AI assistant will suggest helpful nudges here.
+				Your accepted reminders appear under Upcoming. Suggestions are AI-generated nudges.
 			</Text>
 
 			<View style={styles.panel}>
 				<Text style={styles.panelTitle}>Upcoming</Text>
-				<Text style={styles.panelText}>• No events scheduled</Text>
+
+				{upcoming.length === 0 ? (
+					<Text style={styles.panelText}>• No upcoming reminders</Text>
+				) : (
+					<FlatList
+						data={upcoming}
+						keyExtractor={i => i.id}
+						renderItem={renderUpcoming}
+						scrollEnabled={false}
+						style={{ marginTop: 8 }}
+					/>
+				)}
 			</View>
 
 			<View style={styles.panel}>
 				<View style={styles.panelHeader}>
 					<Text style={styles.panelTitle}>Suggestions</Text>
 					<TouchableOpacity onPress={loadSuggestions} style={styles.refresh}>
-						{loading ? (
-							<ActivityIndicator />
-						) : (
-							<Text style={styles.refreshText}>Refresh</Text>
-						)}
+						{loading ? <ActivityIndicator /> : <Text style={styles.refreshText}>Refresh</Text>}
 					</TouchableOpacity>
 				</View>
 
@@ -103,7 +152,7 @@ export default function HomeScreen() {
 					<FlatList
 						data={suggestions}
 						keyExtractor={i => i.id}
-						renderItem={renderItem}
+						renderItem={renderSuggestion}
 						scrollEnabled={false}
 						style={{ marginTop: 8 }}
 					/>
@@ -195,5 +244,13 @@ const styles = StyleSheet.create({
 	refreshText: {
 		color: '#1E90FF',
 		fontWeight: '600',
+	},
+	upcomingItem: {
+		padding: 12,
+		borderRadius: 8,
+		backgroundColor: '#fff',
+		borderWidth: 1,
+		borderColor: '#f0f0f0',
+		marginBottom: 8,
 	},
 })
