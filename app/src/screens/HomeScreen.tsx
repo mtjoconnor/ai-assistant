@@ -10,24 +10,38 @@ import {
 	TouchableOpacity,
 	Alert,
 	Animated,
+	Platform,
 } from 'react-native'
+import * as Notifications from 'expo-notifications'
+import * as Device from 'expo-device'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { generateRemindersDemo, SuggestedReminder } from '../services/reminderService'
 
 const UPCOMING_KEY = 'ai_native_upcoming_v1'
 const UNDO_DURATION_MS = 8000 // allow 8s to undo
 
+type UpcomingWithNotification = SuggestedReminder & { notificationId?: string }
+
 type LastAction =
-	| { kind: 'accept'; item: SuggestedReminder }
+	| { kind: 'accept'; item: UpcomingWithNotification }
 	| { kind: 'dismiss'; itemId: string }
-	| { kind: 'remove'; item: SuggestedReminder }
-	| { kind: 'snooze'; item: SuggestedReminder; previousWhen: string }
+	| { kind: 'remove'; item: UpcomingWithNotification }
+	| { kind: 'snooze'; item: UpcomingWithNotification; previousWhen: string }
 	| null
+
+// Set a handler so notifications show while app is foregrounded (optional behaviour)
+Notifications.setNotificationHandler({
+	handleNotification: async () => ({
+		shouldShowAlert: true,
+		shouldPlaySound: false,
+		shouldSetBadge: false,
+	}),
+})
 
 export default function HomeScreen() {
 	const [loading, setLoading] = useState(false)
 	const [suggestions, setSuggestions] = useState<SuggestedReminder[]>([])
-	const [upcoming, setUpcoming] = useState<SuggestedReminder[]>([])
+	const [upcoming, setUpcoming] = useState<UpcomingWithNotification[]>([])
 	const [lastAction, setLastAction] = useState<LastAction>(null)
 	const undoTimerRef = useRef<number | null>(null)
 	const undoAnim = useRef(new Animated.Value(0)).current
@@ -45,13 +59,33 @@ export default function HomeScreen() {
 				console.warn('failed to load upcoming from storage', e)
 			}
 		})()
+
+		// request notification permission
+		requestNotificationPermissions().catch(e => console.warn('perm request failed', e))
+
 		// cleanup on unmount
 		return () => {
 			if (undoTimerRef.current) clearTimeout(undoTimerRef.current)
 		}
 	}, [])
 
-	async function persistUpcoming(list: SuggestedReminder[]) {
+	async function requestNotificationPermissions() {
+		if (!Device.isDevice) {
+			// Notifications work best on a real device.
+			console.warn('Must use physical device for notifications')
+		}
+		const { status: existingStatus } = await Notifications.getPermissionsAsync()
+		let finalStatus = existingStatus
+		if (existingStatus !== 'granted') {
+			const { status } = await Notifications.requestPermissionsAsync()
+			finalStatus = status
+		}
+		if (finalStatus !== 'granted') {
+			Alert.alert('Permission required', 'Enable notifications to receive reminders.')
+		}
+	}
+
+	async function persistUpcoming(list: UpcomingWithNotification[]) {
 		try {
 			await AsyncStorage.setItem(UPCOMING_KEY, JSON.stringify(list))
 		} catch (e) {
@@ -59,25 +93,52 @@ export default function HomeScreen() {
 		}
 	}
 
-	async function loadSuggestions() {
-		setLoading(true)
+	async function scheduleNotificationForItem(item: SuggestedReminder) : Promise<string | undefined> {
 		try {
-			const s = await generateRemindersDemo()
-			setSuggestions(s)
-		} catch (err) {
-			Alert.alert('Error', 'Failed to load suggestions')
-		} finally {
-			setLoading(false)
+			const whenDate = new Date(item.when)
+			const now = new Date()
+			if (whenDate <= now) {
+				// if time is in the past, schedule immediately (or skip)
+				return await Notifications.scheduleNotificationAsync({
+					content: {
+						title: 'Reminder',
+						body: item.text,
+						data: { itemId: item.id },
+					},
+					trigger: null,
+				})
+			}
+			// schedule at the given exact timestamp
+			const trigger = whenDate
+			const id = await Notifications.scheduleNotificationAsync({
+				content: {
+					title: 'Upcoming: ' + (item.text.length > 30 ? item.text.slice(0, 30) + '…' : item.text),
+					body: item.text,
+					data: { itemId: item.id },
+				},
+				trigger,
+			})
+			return id
+		} catch (e) {
+			console.warn('failed to schedule notification', e)
+			return undefined
+		}
+	}
+
+	async function cancelNotificationById(id?: string) {
+		if (!id) return
+		try {
+			await Notifications.cancelScheduledNotificationAsync(id)
+		} catch (e) {
+			console.warn('failed to cancel notification', e)
 		}
 	}
 
 	// Utility: show undo banner for the given action
 	function showUndoBanner(action: LastAction) {
-		// clear previous timer
 		if (undoTimerRef.current) clearTimeout(undoTimerRef.current)
 		setLastAction(action)
 		Animated.timing(undoAnim, { toValue: 1, duration: 200, useNativeDriver: true }).start()
-		// schedule hide
 		undoTimerRef.current = (setTimeout(() => {
 			hideUndoBanner()
 		}, UNDO_DURATION_MS) as unknown) as number
@@ -93,16 +154,22 @@ export default function HomeScreen() {
 		})
 	}
 
-	// Accept: add to upcoming and remove from suggestions
+	// Accept: add to upcoming, schedule notification, and remove from suggestions
 	async function handleAccept(item: SuggestedReminder) {
+		// schedule notification and persist its id
+		const notificationId = await scheduleNotificationForItem(item)
+
+		const itemWithNotif: UpcomingWithNotification = { ...item, notificationId }
+
 		setUpcoming(prev => {
-			const next = [...prev, item].sort((a, b) => new Date(a.when).getTime() - new Date(b.when).getTime())
+			const next = [...prev, itemWithNotif].sort((a, b) => new Date(a.when).getTime() - new Date(b.when).getTime())
 			persistUpcoming(next)
 			return next
 		})
+
 		setSuggestions(prev => prev.filter(p => p.id !== item.id))
 
-		showUndoBanner({ kind: 'accept', item })
+		showUndoBanner({ kind: 'accept', item: itemWithNotif })
 	}
 
 	// Dismiss suggestion
@@ -112,63 +179,94 @@ export default function HomeScreen() {
 		if (dismissed) showUndoBanner({ kind: 'dismiss', itemId: id })
 	}
 
-	// Remove upcoming (delete)
-	function handleRemoveUpcoming(item: SuggestedReminder) {
-		setUpcoming(prev => prev.filter(p => p.id !== item.id))
-		persistUpcoming(upcoming.filter(p => p.id !== item.id))
-		showUndoBanner({ kind: 'remove', item })
-	}
+	// Remove upcoming (delete) and cancel notification
+	async function handleRemoveUpcoming(item: UpcomingWithNotification) {
+		// cancel scheduled notification if present
+		if (item.notificationId) {
+			await cancelNotificationById(item.notificationId)
+		}
 
-	// Snooze upcoming by minutes (creates new when)
-	function handleSnoozeUpcoming(item: SuggestedReminder, minutes: number) {
-		const previousWhen = item.when
-		const newWhen = new Date(new Date(item.when).getTime() + minutes * 60 * 1000).toISOString()
 		setUpcoming(prev => {
-			const next = prev.map(p => (p.id === item.id ? { ...p, when: newWhen } : p)).sort((a, b) => new Date(a.when).getTime() - new Date(b.when).getTime())
+			const next = prev.filter(p => p.id !== item.id)
 			persistUpcoming(next)
 			return next
 		})
-		showUndoBanner({ kind: 'snooze', item, previousWhen })
+
+		showUndoBanner({ kind: 'remove', item })
+	}
+
+	// Snooze upcoming by minutes (reschedule notification accordingly)
+	async function handleSnoozeUpcoming(item: UpcomingWithNotification, minutes: number) {
+		const previousWhen = item.when
+		const newWhen = new Date(new Date(item.when).getTime() + minutes * 60 * 1000).toISOString()
+
+		// cancel previous notification
+		if (item.notificationId) {
+			await cancelNotificationById(item.notificationId)
+		}
+
+		// schedule a new notification for newWhen
+		const newNotifId = await scheduleNotificationForItem({ ...item, when: newWhen })
+
+		const updated: UpcomingWithNotification = { ...item, when: newWhen, notificationId: newNotifId }
+
+		setUpcoming(prev => {
+			const next = prev.map(p => (p.id === item.id ? updated : p)).sort((a, b) => new Date(a.when).getTime() - new Date(b.when).getTime())
+			persistUpcoming(next)
+			return next
+		})
+
+		showUndoBanner({ kind: 'snooze', item: updated, previousWhen })
 	}
 
 	// Undo lastAction
-	function handleUndo() {
+	async function handleUndo() {
 		if (!lastAction) return
 		const action = lastAction
-		// clear banner now
 		hideUndoBanner()
 		switch (action.kind) {
 			case 'accept': {
-				// remove the accepted item from upcoming, and put it back into suggestions at front
 				const item = action.item
+				// cancel scheduled notification for the accepted item
+				if (item.notificationId) {
+					await cancelNotificationById(item.notificationId)
+				}
+				// remove from upcoming
 				setUpcoming(prev => {
 					const next = prev.filter(p => p.id !== item.id)
 					persistUpcoming(next)
 					return next
 				})
-				setSuggestions(prev => [action.item, ...prev])
+				// put it back into suggestions
+				setSuggestions(prev => [{ id: item.id, text: item.text, when: item.when, priority: item.priority }, ...prev])
 				return
 			}
 			case 'dismiss': {
-				// cannot fully reconstruct dismissed content unless we kept it; try noop but inform user
 				Alert.alert('Undo', 'Dismiss undo not supported for this demo.')
 				return
 			}
 			case 'remove': {
-				// re-add the removed upcoming item
 				const item = action.item
+				// re-add (and re-schedule notification)
+				const restored = { ...item }
+				// schedule again
+				const newNotifId = await scheduleNotificationForItem(restored)
+				const restoredWithNotif = { ...restored, notificationId: newNotifId }
 				setUpcoming(prev => {
-					const next = [...prev, item].sort((a, b) => new Date(a.when).getTime() - new Date(b.when).getTime())
+					const next = [...prev, restoredWithNotif].sort((a, b) => new Date(a.when).getTime() - new Date(b.when).getTime())
 					persistUpcoming(next)
 					return next
 				})
 				return
 			}
 			case 'snooze': {
-				// restore previous time
 				const { item, previousWhen } = action
+				// cancel current notif if exists
+				if (item.notificationId) await cancelNotificationById(item.notificationId)
+				// schedule old notification time
+				const oldNotifId = await scheduleNotificationForItem({ ...item, when: previousWhen })
 				setUpcoming(prev => {
-					const next = prev.map(p => (p.id === item.id ? { ...p, when: previousWhen } : p)).sort((a, b) => new Date(a.when).getTime() - new Date(b.when).getTime())
+					const next = prev.map(p => (p.id === item.id ? { ...p, when: previousWhen, notificationId: oldNotifId } : p)).sort((a, b) => new Date(a.when).getTime() - new Date(b.when).getTime())
 					persistUpcoming(next)
 					return next
 				})
@@ -202,7 +300,7 @@ export default function HomeScreen() {
 		)
 	}
 
-	function renderUpcoming({ item }: { item: SuggestedReminder }) {
+	function renderUpcoming({ item }: { item: UpcomingWithNotification }) {
 		return (
 			<View style={styles.upcomingItem}>
 				<View style={{ flex: 1 }}>
