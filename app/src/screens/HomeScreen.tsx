@@ -10,23 +10,18 @@ import {
 	TouchableOpacity,
 	Alert,
 	Animated,
+	Modal,
+	TextInput,
+	Platform,
 } from 'react-native'
 import * as Notifications from 'expo-notifications'
 import * as Device from 'expo-device'
 import AsyncStorage from '@react-native-async-storage/async-storage'
+import DateTimePicker from '@react-native-community/datetimepicker'
 import { generateRemindersDemo, SuggestedReminder } from '../services/reminderService'
 
-/**
- * NOTE:
- * - Install runtime deps if you haven't:
- *   npx expo install expo-notifications expo-device
- *   npm install @react-native-async-storage/async-storage
- *
- * - Use a physical device for reliable scheduled notifications.
- */
-
 const UPCOMING_KEY = 'ai_native_upcoming_v1'
-const UNDO_DURATION_MS = 8000 // allow 8s to undo
+const UNDO_DURATION_MS = 8000
 
 type UpcomingWithNotification = SuggestedReminder & { notificationId?: string }
 
@@ -35,9 +30,9 @@ type LastAction =
 	| { kind: 'dismiss'; itemId: string }
 	| { kind: 'remove'; item: UpcomingWithNotification }
 	| { kind: 'snooze'; item: UpcomingWithNotification; previousWhen: string }
+	| { kind: 'edit'; before: UpcomingWithNotification; after: UpcomingWithNotification }
 	| null
 
-// Ensure notifications render when app is foregrounded (NotificationBehavior)
 Notifications.setNotificationHandler({
 	handleNotification: async () => ({
 		shouldShowAlert: true,
@@ -56,8 +51,13 @@ export default function HomeScreen() {
 	const undoTimerRef = useRef<number | null>(null)
 	const undoAnim = useRef(new Animated.Value(0)).current
 
+	// Edit modal state
+	const [editingItem, setEditingItem] = useState<UpcomingWithNotification | null>(null)
+	const [editText, setEditText] = useState('')
+	const [editDate, setEditDate] = useState<Date>(new Date())
+	const [showDatePicker, setShowDatePicker] = useState(false)
+
 	useEffect(() => {
-		// load persisted upcoming items
 		;(async () => {
 			try {
 				const raw = await AsyncStorage.getItem(UPCOMING_KEY)
@@ -70,10 +70,7 @@ export default function HomeScreen() {
 			}
 		})()
 
-		// request notification permission
 		requestNotificationPermissions().catch(e => console.warn('perm request failed', e))
-
-		// cleanup on unmount
 		return () => {
 			if (undoTimerRef.current) clearTimeout(undoTimerRef.current)
 		}
@@ -102,29 +99,36 @@ export default function HomeScreen() {
 		}
 	}
 
-	// schedule a notification and return the notificationId (or undefined)
 	async function scheduleNotificationForItem(item: SuggestedReminder): Promise<string | undefined> {
-		try {
-			const whenDate = new Date(item.when)
-			const deltaSeconds = Math.max(Math.ceil((whenDate.getTime() - Date.now()) / 1000), 1)
-
-			// schedule with a relative seconds trigger (typed)
-			const id = await Notifications.scheduleNotificationAsync({
-				content: {
-					title:
-						'Upcoming: ' +
-						(item.text.length > 30 ? item.text.slice(0, 30) + '…' : item.text),
-					body: item.text,
-					data: { itemId: item.id },
-				},
-				trigger: { seconds: deltaSeconds },
-			})
-			return id
-		} catch (e) {
-			console.warn('failed to schedule notification', e)
-			return undefined
-		}
-	}
+        try {
+            const whenDate = new Date(item.when)
+            const deltaSeconds = Math.max(Math.ceil((whenDate.getTime() - Date.now()) / 1000), 1)
+   
+            // Build a time-interval trigger. The 'type' discriminant is required by TS.
+            // We cast to `any` (or NotificationTriggerInput) because the d.ts expects a discriminated union.
+            const trigger = {
+                type: 'timeInterval',
+                seconds: deltaSeconds,
+                repeats: false,
+            } as any
+   
+            const id = await Notifications.scheduleNotificationAsync({
+                content: {
+                    title:
+                        'Upcoming: ' +
+                        (item.text.length > 30 ? item.text.slice(0, 30) + '…' : item.text),
+                    body: item.text,
+                    data: { itemId: item.id },
+                },
+                trigger,
+            })
+            return id
+        } catch (e) {
+            console.warn('failed to schedule notification', e)
+            return undefined
+        }
+   }
+   
 
 	async function cancelNotificationById(id?: string) {
 		if (!id) return
@@ -135,7 +139,6 @@ export default function HomeScreen() {
 		}
 	}
 
-	// loadSuggestions declared as a const arrow fn to satisfy TS/hoisting
 	const loadSuggestions = async () => {
 		setLoading(true)
 		try {
@@ -148,7 +151,6 @@ export default function HomeScreen() {
 		}
 	}
 
-	// Utility: show undo banner for the given action
 	function showUndoBanner(action: LastAction) {
 		if (undoTimerRef.current) clearTimeout(undoTimerRef.current)
 		setLastAction(action)
@@ -168,15 +170,12 @@ export default function HomeScreen() {
 		})
 	}
 
-	// Accept: add to upcoming, schedule notification, and remove from suggestions
 	async function handleAccept(item: SuggestedReminder) {
 		const notificationId = await scheduleNotificationForItem(item)
 		const itemWithNotif: UpcomingWithNotification = { ...item, notificationId }
 
 		setUpcoming(prev => {
-			const next = [...prev, itemWithNotif].sort(
-				(a, b) => new Date(a.when).getTime() - new Date(b.when).getTime()
-			)
+			const next = [...prev, itemWithNotif].sort((a, b) => new Date(a.when).getTime() - new Date(b.when).getTime())
 			persistUpcoming(next)
 			return next
 		})
@@ -185,14 +184,12 @@ export default function HomeScreen() {
 		showUndoBanner({ kind: 'accept', item: itemWithNotif })
 	}
 
-	// Dismiss suggestion
 	function handleDismiss(id: string) {
 		const dismissed = suggestions.find(s => s.id === id) || null
 		setSuggestions(prev => prev.filter(p => p.id !== id))
 		if (dismissed) showUndoBanner({ kind: 'dismiss', itemId: id })
 	}
 
-	// Remove upcoming (delete) and cancel notification
 	async function handleRemoveUpcoming(item: UpcomingWithNotification) {
 		if (item.notificationId) {
 			await cancelNotificationById(item.notificationId)
@@ -207,25 +204,19 @@ export default function HomeScreen() {
 		showUndoBanner({ kind: 'remove', item })
 	}
 
-	// Snooze upcoming by minutes (reschedule notification accordingly)
 	async function handleSnoozeUpcoming(item: UpcomingWithNotification, minutes: number) {
 		const previousWhen = item.when
 		const newWhen = new Date(new Date(item.when).getTime() + minutes * 60 * 1000).toISOString()
 
-		// cancel previous notification
 		if (item.notificationId) {
 			await cancelNotificationById(item.notificationId)
 		}
 
-		// schedule a new notification for newWhen
 		const newNotifId = await scheduleNotificationForItem({ ...item, when: newWhen })
-
 		const updated: UpcomingWithNotification = { ...item, when: newWhen, notificationId: newNotifId }
 
 		setUpcoming(prev => {
-			const next = prev
-				.map(p => (p.id === item.id ? updated : p))
-				.sort((a, b) => new Date(a.when).getTime() - new Date(b.when).getTime())
+			const next = prev.map(p => (p.id === item.id ? updated : p)).sort((a, b) => new Date(a.when).getTime() - new Date(b.when).getTime())
 			persistUpcoming(next)
 			return next
 		})
@@ -233,7 +224,33 @@ export default function HomeScreen() {
 		showUndoBanner({ kind: 'snooze', item: updated, previousWhen })
 	}
 
-	// Undo lastAction
+	async function handleEditSave() {
+		if (!editingItem) return
+		// prepare new object
+		const before = editingItem
+		const after: UpcomingWithNotification = { ...before, text: editText, when: editDate.toISOString() }
+
+		// cancel previous notif if any
+		if (before.notificationId) {
+			await cancelNotificationById(before.notificationId)
+		}
+		// schedule new notif
+		const newNotifId = await scheduleNotificationForItem(after)
+		after.notificationId = newNotifId
+
+		// update list
+		setUpcoming(prev => {
+			const next = prev.map(p => (p.id === after.id ? after : p)).sort((a, b) => new Date(a.when).getTime() - new Date(b.when).getTime())
+			persistUpcoming(next)
+			return next
+		})
+
+		// show undo with before/after payload
+		showUndoBanner({ kind: 'edit', before, after })
+		// close modal
+		setEditingItem(null)
+	}
+
 	async function handleUndo() {
 		if (!lastAction) return
 		const action = lastAction
@@ -249,10 +266,7 @@ export default function HomeScreen() {
 					persistUpcoming(next)
 					return next
 				})
-				setSuggestions(prev => [
-					{ id: item.id, text: item.text, when: item.when, priority: item.priority },
-					...prev,
-				])
+				setSuggestions(prev => [{ id: item.id, text: item.text, when: item.when, priority: item.priority }, ...prev])
 				return
 			}
 			case 'dismiss': {
@@ -265,9 +279,7 @@ export default function HomeScreen() {
 				const newNotifId = await scheduleNotificationForItem(restored)
 				const restoredWithNotif = { ...restored, notificationId: newNotifId }
 				setUpcoming(prev => {
-					const next = [...prev, restoredWithNotif].sort(
-						(a, b) => new Date(a.when).getTime() - new Date(b.when).getTime()
-					)
+					const next = [...prev, restoredWithNotif].sort((a, b) => new Date(a.when).getTime() - new Date(b.when).getTime())
 					persistUpcoming(next)
 					return next
 				})
@@ -278,9 +290,21 @@ export default function HomeScreen() {
 				if (item.notificationId) await cancelNotificationById(item.notificationId)
 				const oldNotifId = await scheduleNotificationForItem({ ...item, when: previousWhen })
 				setUpcoming(prev => {
-					const next = prev
-						.map(p => (p.id === item.id ? { ...p, when: previousWhen, notificationId: oldNotifId } : p))
-						.sort((a, b) => new Date(a.when).getTime() - new Date(b.when).getTime())
+					const next = prev.map(p => (p.id === item.id ? { ...p, when: previousWhen, notificationId: oldNotifId } : p)).sort((a, b) => new Date(a.when).getTime() - new Date(b.when).getTime())
+					persistUpcoming(next)
+					return next
+				})
+				return
+			}
+			case 'edit': {
+				const { before, after } = action
+				// cancel current (after) notification
+				if (after.notificationId) await cancelNotificationById(after.notificationId)
+				// reschedule previous
+				const oldNotifId = await scheduleNotificationForItem(before)
+				const restored = { ...before, notificationId: oldNotifId }
+				setUpcoming(prev => {
+					const next = prev.map(p => (p.id === restored.id ? restored : p)).sort((a, b) => new Date(a.when).getTime() - new Date(b.when).getTime())
 					persistUpcoming(next)
 					return next
 				})
@@ -314,32 +338,40 @@ export default function HomeScreen() {
 		)
 	}
 
+	function openEditModal(item: UpcomingWithNotification) {
+		setEditingItem(item)
+		setEditText(item.text)
+		setEditDate(new Date(item.when))
+	}
+
 	function renderUpcoming({ item }: { item: UpcomingWithNotification }) {
 		return (
-			<View style={styles.upcomingItem}>
-				<View style={{ flex: 1 }}>
-					<Text style={styles.cardText}>{item.text}</Text>
-					<Text style={styles.cardSub}>{new Date(item.when).toLocaleString()}</Text>
-				</View>
-
-				<View style={{ marginLeft: 12, alignItems: 'flex-end' }}>
-					<View style={{ marginBottom: 8, flexDirection: 'row' }}>
-						<TouchableOpacity onPress={() => handleSnoozeUpcoming(item, 10)} style={[styles.smallButton]}>
-							<Text style={styles.smallButtonText}>+10m</Text>
-						</TouchableOpacity>
-						<TouchableOpacity onPress={() => handleSnoozeUpcoming(item, 30)} style={[styles.smallButton]}>
-							<Text style={styles.smallButtonText}>+30m</Text>
-						</TouchableOpacity>
-						<TouchableOpacity onPress={() => handleSnoozeUpcoming(item, 60)} style={[styles.smallButton]}>
-							<Text style={styles.smallButtonText}>+1h</Text>
-						</TouchableOpacity>
+			<TouchableOpacity onPress={() => openEditModal(item)} activeOpacity={0.8}>
+				<View style={styles.upcomingItem}>
+					<View style={{ flex: 1 }}>
+						<Text style={styles.cardText}>{item.text}</Text>
+						<Text style={styles.cardSub}>{new Date(item.when).toLocaleString()}</Text>
 					</View>
 
-					<TouchableOpacity onPress={() => handleRemoveUpcoming(item)} style={[styles.button, styles.dismissButton]}>
-						<Text style={styles.buttonText}>Remove</Text>
-					</TouchableOpacity>
+					<View style={{ marginLeft: 12, alignItems: 'flex-end' }}>
+						<View style={{ marginBottom: 8, flexDirection: 'row' }}>
+							<TouchableOpacity onPress={() => handleSnoozeUpcoming(item, 10)} style={[styles.smallButton]}>
+								<Text style={styles.smallButtonText}>+10m</Text>
+							</TouchableOpacity>
+							<TouchableOpacity onPress={() => handleSnoozeUpcoming(item, 30)} style={[styles.smallButton]}>
+								<Text style={styles.smallButtonText}>+30m</Text>
+							</TouchableOpacity>
+							<TouchableOpacity onPress={() => handleSnoozeUpcoming(item, 60)} style={[styles.smallButton]}>
+								<Text style={styles.smallButtonText}>+1h</Text>
+							</TouchableOpacity>
+						</View>
+
+						<TouchableOpacity onPress={() => handleRemoveUpcoming(item)} style={[styles.button, styles.dismissButton]}>
+							<Text style={styles.buttonText}>Remove</Text>
+						</TouchableOpacity>
+					</View>
 				</View>
-			</View>
+			</TouchableOpacity>
 		)
 	}
 
@@ -348,7 +380,7 @@ export default function HomeScreen() {
 			<ScrollView contentContainerStyle={styles.container}>
 				<Text style={styles.title}>Today</Text>
 				<Text style={styles.subtitle}>
-					Your accepted reminders appear under Upcoming. Suggestions are AI-generated nudges.
+					Tap an Upcoming reminder to edit its text and time.
 				</Text>
 
 				<View style={styles.panel}>
@@ -391,6 +423,52 @@ export default function HomeScreen() {
 				</View>
 			</ScrollView>
 
+			{/* Edit modal */}
+			<Modal visible={!!editingItem} animationType="slide" transparent>
+				<View style={styles.modalOverlay}>
+					<View style={styles.modalCard}>
+						<Text style={{ fontWeight: '700', marginBottom: 8 }}>Edit reminder</Text>
+
+						<TextInput
+							value={editText}
+							onChangeText={setEditText}
+							placeholder="Reminder text"
+							style={styles.input}
+						/>
+
+						<TouchableOpacity
+							onPress={() => setShowDatePicker(true)}
+							style={{ paddingVertical: 8, marginBottom: 6 }}>
+							<Text style={{ color: '#1E90FF' }}>{editDate.toLocaleString()}</Text>
+						</TouchableOpacity>
+
+						{showDatePicker && (
+							<DateTimePicker
+								value={editDate}
+								mode="datetime"
+								display={Platform.OS === 'ios' ? 'inline' : 'default'}
+								onChange={(e, d) => {
+									setShowDatePicker(Platform.OS === 'ios') // keep open on iOS inline
+									if (d) setEditDate(d)
+								}}
+							/>
+						)}
+
+						<View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 12 }}>
+							<TouchableOpacity onPress={() => setEditingItem(null)} style={{ marginRight: 12 }}>
+								<Text style={{ color: '#666' }}>Cancel</Text>
+							</TouchableOpacity>
+
+							<TouchableOpacity
+								onPress={handleEditSave}
+								style={[styles.button, styles.acceptButton]}>
+								<Text style={[styles.buttonText]}>Save</Text>
+							</TouchableOpacity>
+						</View>
+					</View>
+				</View>
+			</Modal>
+
 			{/* Undo banner */}
 			{lastAction ? (
 				<Animated.View
@@ -413,6 +491,7 @@ export default function HomeScreen() {
 						{lastAction.kind === 'dismiss' && 'Suggestion dismissed'}
 						{lastAction.kind === 'remove' && 'Removed from Upcoming'}
 						{lastAction.kind === 'snooze' && 'Snoozed'}
+						{lastAction.kind === 'edit' && 'Reminder edited'}
 					</Text>
 					<TouchableOpacity onPress={handleUndo} style={styles.undoButton}>
 						<Text style={styles.undoButtonText}>Undo</Text>
@@ -428,7 +507,7 @@ const styles = StyleSheet.create({
 		padding: 24,
 		flexGrow: 1,
 		backgroundColor: '#fff',
-		paddingBottom: 96, // leave space for undo banner
+		paddingBottom: 96,
 	},
 	title: {
 		fontSize: 28,
@@ -555,5 +634,25 @@ const styles = StyleSheet.create({
 	undoButtonText: {
 		color: '#111',
 		fontWeight: '700',
+	},
+
+	/* modal */
+	modalOverlay: {
+		flex: 1,
+		backgroundColor: 'rgba(0,0,0,0.35)',
+		justifyContent: 'center',
+		padding: 16,
+	},
+	modalCard: {
+		backgroundColor: '#fff',
+		borderRadius: 12,
+		padding: 16,
+	},
+	input: {
+		borderWidth: 1,
+		borderColor: '#eee',
+		borderRadius: 8,
+		padding: 8,
+		marginBottom: 8,
 	},
 })
